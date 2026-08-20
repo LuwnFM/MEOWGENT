@@ -59,9 +59,63 @@ def poll_task() -> dict[str, Any] | None:
     return task if isinstance(task, dict) else None
 
 
+def get_routing_prompt() -> str:
+    response = requests.post(
+        f"{BASE_URL}/api/agent",
+        json={"accessCode": ACCESS_CODE, "action": "GET_PROMPT"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    prompt = response.json().get("routingPrompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("Gateway returned an empty routing prompt")
+    return prompt
+
+
+def update_routing_prompt(prompt: str) -> None:
+    response = requests.post(
+        f"{BASE_URL}/api/agent",
+        json={"accessCode": ACCESS_CODE, "action": "UPDATE_PROMPT", "newPrompt": prompt},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+
+def response_text(content: Any) -> str:
+    if isinstance(content, list):
+        return "".join(
+            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content)
+
+
+def regenerate_routing_prompt(dispatcher: ChatOpenAI, prompt: str, trace: str) -> str:
+    meta_prompt = f"""
+You maintain a production LLM routing matrix. Revise the routing rules below using the
+execution failure trace. Preserve the strict node safety boundaries: primary handles
+architecture and complex logic; medium nodes handle intermediate transformations; fast
+nodes handle only routine aggregation, scraping, and parsing. Return only the complete
+replacement routing prompt, with no Markdown fences or commentary.
+
+CURRENT ROUTING MATRIX:
+{prompt}
+
+EXECUTION FAILURE TRACE:
+{trace}
+"""
+    revised = response_text(dispatcher.invoke([HumanMessage(content=meta_prompt)]).content)
+    revised = revised.strip()
+    if revised.startswith("```"):
+        revised = revised.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    if len(revised) < 20 or len(revised) > 20_000:
+        raise ValueError("Dispatcher returned an invalid replacement routing prompt")
+    return revised
+
+
 def parse_verdict(content: Any, fallback_instruction: str) -> tuple[str, str, str]:
     if isinstance(content, list):
-        content = "".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in content)
+        content = response_text(content)
     raw = str(content).strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
@@ -96,14 +150,30 @@ def main() -> None:
                     raise ValueError("Received an empty task instruction")
                 log_to_server("Dispatcher evaluates the dynamic routing matrix...")
                 try:
-                    verdict = dispatcher.invoke([HumanMessage(content=f"{ROUTING_PROMPT}\n\nUSER DIRECTIVE TO CLASSIFY:\n{instruction}")])
+                    routing_prompt = get_routing_prompt()
+                except Exception as error:
+                    print(f"[!] Prompt fetch failed: {error}. Using local fallback matrix.")
+                    routing_prompt = ROUTING_PROMPT
+                try:
+                    verdict = dispatcher.invoke([HumanMessage(content=f"{routing_prompt}\n\nUSER DIRECTIVE TO CLASSIFY:\n{instruction}")])
                     target_node, reason, masked_task = parse_verdict(verdict.content, instruction)
                 except Exception as error:
                     print(f"[!] Matrix parsing error: {error}. Redirecting to primary node.")
                     target_node, reason, masked_task = "primary", "Safe primary fallback applied.", instruction
                 selected_node = target_node if target_node in providers else "primary"
                 log_to_server(f"Node: {selected_node.upper()}. Matrix reasoning: {reason}")
-                Agent(task=f"{SP_WORKER}\n\nTARGET ACTION: {masked_task}", llm=providers[selected_node]).run()
+                try:
+                    Agent(task=f"{SP_WORKER}\n\nTARGET ACTION: {masked_task}", llm=providers[selected_node]).run()
+                except Exception as action_error:
+                    trace = f"node={selected_node}; instruction={masked_task}; error={action_error!r}"
+                    log_to_server("Execution node failed; dispatcher is regenerating the routing matrix...")
+                    try:
+                        revised_prompt = regenerate_routing_prompt(dispatcher, routing_prompt, trace)
+                        update_routing_prompt(revised_prompt)
+                        log_to_server("Routing matrix updated from the execution anomaly.")
+                    except Exception as update_error:
+                        print(f"[!] Matrix self-healing failed: {update_error}")
+                    raise
                 log_to_server("Operation completed by the dynamically allocated worker.", "completed")
         except Exception as error:
             log_to_server(f"Worker error: {error}", "failed")
