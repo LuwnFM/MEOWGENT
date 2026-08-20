@@ -24,6 +24,8 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
   const [stealth, setStealth] = useState<StealthLevel>('standard');
   const [cacheDetected, setCacheDetected] = useState(false);
   const [load, setLoad] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState('');
   
   // Хранилище логов для экспорта в репорт
   const [historyLogs, setHistoryLogs] = useState<string[]>([]);
@@ -89,6 +91,18 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
     setHistoryLogs([`[${new Date().toLocaleTimeString()}] [PENDING] Инициализация нового полетного задания...`]);
 
     try {
+      const fileKeys: string[] = [];
+      for (const file of files) {
+        const signResponse = await fetch('/api/files', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessCode, filename: file.name, contentType: file.type }),
+        });
+        if (!signResponse.ok) throw new Error('Не удалось получить ссылку S3 для файла.');
+        const signed = await signResponse.json() as { key: string; url: string };
+        const uploadResponse = await fetch(signed.url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+        if (!uploadResponse.ok) throw new Error(`Не удалось загрузить файл ${file.name}.`);
+        fileKeys.push(signed.key);
+      }
       const response = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,12 +111,15 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
           action: 'SET_TASK', 
           instruction: trimmedInstruction,
           stealthLevel: stealth // Передаем выбранный уровень скрытности в API
+          , fileKeys
         }),
       });
       if (!response.ok) throw new Error('Task submission aborted');
       setStatus('pending');
       setText('Спецификация отправлена. Распределенная сеть вычисляет маршруты провайдеров...');
       setInstruction('');
+      setFiles([]);
+      setFileError('');
     } catch {
       setStatus('failed');
       setText('Критическая ошибка: Не удалось доставить таску на сервер.');
@@ -204,6 +221,22 @@ ${historyLogs.map(log => `* ${log}`).join('\n')}
         onChange={(event) => setInstruction(event.target.value)}
         placeholder="Введите глобальную полетную инструкцию для распределенной сети..."
       />
+
+      <label style={{ display: 'block', marginTop: '10px', color: '#88ff88', fontSize: '12px' }}>
+        FILES FOR AGENT
+        <input
+          type="file"
+          multiple
+          onChange={(event) => {
+            const selected = Array.from(event.target.files ?? []).slice(0, 10);
+            setFiles(selected);
+            setFileError(selected.length ? '' : '');
+          }}
+          style={{ display: 'block', marginTop: '6px', width: '100%' }}
+        />
+      </label>
+      {files.length > 0 && <p style={{ fontSize: '11px', color: '#00ffff' }}>{files.length} file(s) queued: {files.map((file) => file.name).join(', ')}</p>}
+      {fileError && <p style={{ fontSize: '11px', color: '#ff3333' }}>{fileError}</p>}
 
       {/* КНОПКА ЗАПУСКА КЛАССИФИКАЦИИ */}
       <button

@@ -1,0 +1,7 @@
+browser-use
+langchain-core
+langchain-openai
+pydantic
+requests
+redis
+setuptools

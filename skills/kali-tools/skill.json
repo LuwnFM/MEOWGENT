@@ -1,0 +1,7 @@
+{
+  "id": "kali-tools",
+  "name": "Kali tools catalog",
+  "description": "Discover Kali tool packages and executables installed in the Linux VM.",
+  "entrypoint": "main.py",
+  "timeout_seconds": 45
+}

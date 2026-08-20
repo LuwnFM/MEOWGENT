@@ -1,18 +1,21 @@
 import { NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
 import { createPool } from '@vercel/postgres';
+import { enqueueAgentJob } from '@/lib/queue';
+import { inngest } from '@/lib/inngest';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
-type Task = { instruction: string; status: TaskStatus; statusText: string };
+type Task = { id?: number; instruction: string; status: TaskStatus; statusText: string };
 type AgentRequest = {
   accessCode?: unknown;
   action?: unknown;
   instruction?: unknown;
   agentStatus?: { status?: unknown; text?: unknown };
   newPrompt?: unknown;
+  fileKeys?: unknown;
 };
 
 let currentTask: Task | null = null;
@@ -60,6 +63,16 @@ async function queryDatabase(query: string, values: DatabaseValue[] = []): Promi
 
 async function ensureTableExists(): Promise<void> {
   await queryDatabase(`
+    CREATE TABLE IF NOT EXISTS agent_tasks (
+      id SERIAL PRIMARY KEY,
+      instruction TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      status_text TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await queryDatabase(`
     CREATE TABLE IF NOT EXISTS routing_config (
       id SERIAL PRIMARY KEY,
       prompt_text TEXT NOT NULL,
@@ -96,15 +109,28 @@ export async function POST(request: Request) {
     await ensureTableExists();
 
     if (body.action === 'SET_TASK' && typeof body.instruction === 'string' && body.instruction.trim()) {
-      currentTask = {
-        instruction: body.instruction.trim(),
-        status: 'pending',
-        statusText: 'Supervisor node dispatching work...',
-      };
+      const instruction = body.instruction.trim();
+      const rows = await queryDatabase(
+        'INSERT INTO agent_tasks (instruction, status, status_text) VALUES ($1, $2, $3) RETURNING id',
+        [instruction, 'pending', 'Supervisor node dispatching work...'],
+      );
+      currentTask = { id: Number(rows[0]?.id), instruction, status: 'pending', statusText: 'Supervisor node dispatching work...' };
+      const fileKeys = Array.isArray(body.fileKeys) ? body.fileKeys.filter((key): key is string => typeof key === 'string').slice(0, 20) : [];
+      if (process.env.REDIS_URL) {
+        await enqueueAgentJob({ taskId: currentTask.id ?? 0, instruction, fileKeys });
+      }
+      if (process.env.INNGEST_EVENT_KEY) {
+        await inngest.send({ name: 'agent/job.created', data: { taskId: currentTask.id ?? 0, instruction, fileKeys } });
+      }
       return NextResponse.json({ success: true });
     }
 
     if (body.action === 'GET_STATUS') {
+      if (!currentTask) {
+        const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
+        const row = rows[0];
+        if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
+      }
       return NextResponse.json({ task: currentTask });
     }
 
@@ -114,6 +140,10 @@ export async function POST(request: Request) {
       if (typeof status === 'string' && validStatuses.includes(status as TaskStatus) && typeof text === 'string') {
         currentTask.status = status as TaskStatus;
         currentTask.statusText = text;
+        await queryDatabase(
+          'UPDATE agent_tasks SET status = $1, status_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+          [status, text, currentTask.id ?? null],
+        );
       }
       return NextResponse.json({ success: true });
     }
@@ -149,6 +179,11 @@ export async function GET(request: Request) {
   }
   try {
     await ensureTableExists();
+    if (!currentTask) {
+      const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
+      const row = rows[0];
+      if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
+    }
     return NextResponse.json({ task: currentTask });
   } catch (error) {
     console.error('Agent database error:', error);

@@ -1,0 +1,7 @@
+{
+  "id": "system-info",
+  "name": "System information",
+  "description": "Read basic operating-system and Python runtime information.",
+  "entrypoint": "main.py",
+  "timeout_seconds": 15
+}

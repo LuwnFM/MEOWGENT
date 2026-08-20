@@ -1,0 +1,12 @@
+.git
+.gitignore
+.next
+node_modules
+secops-agent-update.zip
+secops-copilot-template (1).zip
+__pycache__
+*.pyc
+tests
+.env
+.env.*
+!.env.worker.example
