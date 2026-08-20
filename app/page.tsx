@@ -1,7 +1,7 @@
-'use plt';
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import AgentPanel from '@/components/AgentPanel';
 import { Shield, Send, Terminal, Key, ShieldAlert, Code2, Download } from 'lucide-react';
 
 interface Message {
@@ -16,6 +16,7 @@ export default function Home() {
   const [model, setModel] = useState('z-ai/glm-5.2:free');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [tab, setTab] = useState<'chat' | 'agent'>('chat');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +45,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const res = await fetch('/app/api/chat', { // Adjusted to standard next mapping internally
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -54,16 +55,9 @@ export default function Home() {
         })
       });
 
-      // Quick fix for NextJS standard directory layout mapping
-      const finalRes = res.status === 404 ? await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, model, accessCode })
-      }) : res;
+      const data = await res.json();
 
-      const data = await finalRes.json();
-
-      if (!finalRes.ok) {
+      if (!res.ok) {
         if (data.error === 'INVALID_ACCESS_CODE') {
           setErrorMsg('Ошибка: Неверный "Ключ доступа к панели" в настройках!');
         } else {
@@ -107,13 +101,15 @@ export default function Home() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
+          <button type="button" onClick={() => setTab('chat')} className={tab === 'chat' ? 'text-emerald-400' : 'text-zinc-500'}>CHAT</button>
+          <button type="button" onClick={() => setTab('agent')} className={tab === 'agent' ? 'text-emerald-400' : 'text-zinc-500'}>AGENT</button>
           <button onClick={exportSession} className="p-2 text-zinc-400 hover:text-zinc-200 border border-zinc-800 rounded-lg bg-zinc-900 text-xs flex items-center gap-1.5 transition-all">
             <Download className="w-3.5 h-3.5" /> Экспорт
           </button>
         </div>
       </header>
 
-      {/* Main Grid */}
+      {tab === 'agent' ? <AgentPanel accessCode={accessCode} /> : (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-1 overflow-hidden min-h-0">
         {/* Sidebar Configuration */}
         <div className="md:col-span-1 border border-zinc-800 bg-zinc-950 p-4 rounded-xl flex flex-col gap-4 overflow-y-auto">
@@ -215,6 +211,7 @@ export default function Home() {
           </form>
         </div>
       </div>
+      )}
     </div>
   );
 }
