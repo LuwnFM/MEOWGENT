@@ -4,11 +4,7 @@ import { useEffect, useState } from 'react';
 
 type TaskStatus = 'offline' | 'pending' | 'running' | 'completed' | 'failed';
 
-type Task = {
-  instruction: string;
-  status: TaskStatus;
-  statusText: string;
-};
+type Task = { instruction: string; status: TaskStatus; statusText: string };
 
 type AgentResponse = {
   task?: Task | null;
@@ -17,8 +13,8 @@ type AgentResponse = {
 export default function AgentPanel({ accessCode }: { accessCode: string }) {
   const [instruction, setInstruction] = useState('');
   const [status, setStatus] = useState<TaskStatus>('offline');
-  const [text, setText] = useState('No active tasks.');
-  const [loading, setLoading] = useState(false);
+  const [text, setText] = useState('System ready. Multi-provider cascade active.');
+  const [load, setLoad] = useState(false);
 
   const sync = async () => {
     if (!accessCode) {
@@ -54,7 +50,7 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
     const trimmedInstruction = instruction.trim();
     if (!trimmedInstruction || !accessCode) return;
 
-    setLoading(true);
+    setLoad(true);
     try {
       const response = await fetch('/api/agent', {
         method: 'POST',
@@ -63,19 +59,20 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
       });
       if (!response.ok) throw new Error('Task could not be submitted');
       setStatus('pending');
-      setText('Waiting for host...');
+      setText('Supervisor node dispatching work...');
       setInstruction('');
     } catch {
       setStatus('failed');
       setText('Task submission failed.');
     } finally {
-      setLoading(false);
+      setLoad(false);
     }
   };
 
   return (
     <section className="border border-zinc-800 bg-zinc-950 rounded-xl p-4 font-mono">
-      <h2 className="text-sm font-bold tracking-wider text-emerald-400">AUTOMATION CONTROL</h2>
+      <h2 className="text-sm font-bold tracking-wider text-emerald-400">MULTI-PROVIDER AGENT TERMINAL</h2>
+      <p className="mt-1 text-[11px] text-zinc-500">OpenRouter (Primary) -&gt; Groq (Pacing) -&gt; Mistral (Embeds) -&gt; g4f (Fallback)</p>
       <textarea
         rows={4}
         className="mt-4 w-full rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm text-emerald-300 outline-none focus:border-emerald-700"
@@ -86,13 +83,13 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
       <button
         type="button"
         onClick={() => void run()}
-        disabled={loading || !accessCode || !instruction.trim()}
+        disabled={load || !accessCode || !instruction.trim()}
         className="mt-3 w-full rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {loading ? 'SUBMITTING...' : 'EXECUTE'}
+        {load ? 'ROUTING TASK...' : 'DISPATCH TO DISTRIBUTED NETWORK'}
       </button>
       <div className="mt-4 border-t border-zinc-800 pt-3 text-sm">
-        <p className="text-emerald-400">STATUS: {status.toUpperCase()}</p>
+        <p className="text-emerald-400">NODE STATUS: {status.toUpperCase()}</p>
         <p className="mt-1 text-zinc-500">LOG: {text}</p>
       </div>
     </section>

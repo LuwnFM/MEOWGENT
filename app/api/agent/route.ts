@@ -1,13 +1,7 @@
 import { NextResponse } from 'next/server';
 
 type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
-
-type Task = {
-  instruction: string;
-  status: TaskStatus;
-  statusText: string;
-};
-
+type Task = { instruction: string; status: TaskStatus; statusText: string };
 type AgentRequest = {
   accessCode?: unknown;
   action?: unknown;
@@ -18,7 +12,8 @@ type AgentRequest = {
 let currentTask: Task | null = null;
 
 function authorized(accessCode: unknown): boolean {
-  return Boolean(process.env.APP_ACCESS_CODE) && accessCode === process.env.APP_ACCESS_CODE;
+  const configuredCode = process.env.APP_ACCESS_CODE ?? process.env.NEXT_PUBLIC_APP_ACCESS_CODE;
+  return Boolean(configuredCode) && accessCode === configuredCode;
 }
 
 export async function POST(request: Request) {
@@ -32,7 +27,7 @@ export async function POST(request: Request) {
       currentTask = {
         instruction: body.instruction.trim(),
         status: 'pending',
-        statusText: 'Waiting for host...',
+        statusText: 'Supervisor node dispatching work...',
       };
       return NextResponse.json({ success: true });
     }
@@ -43,7 +38,8 @@ export async function POST(request: Request) {
 
     if (body.action === 'UPDATE_FROM_AGENT' && currentTask && body.agentStatus) {
       const { status, text } = body.agentStatus;
-      if (typeof status === 'string' && typeof text === 'string') {
+      const validStatuses: TaskStatus[] = ['pending', 'running', 'completed', 'failed'];
+      if (typeof status === 'string' && validStatuses.includes(status as TaskStatus) && typeof text === 'string') {
         currentTask.status = status as TaskStatus;
         currentTask.statusText = text;
       }
@@ -52,7 +48,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: 'Bad action' }, { status: 400 });
   } catch {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    return NextResponse.json({ error: 'Server Error' }, { status: 500 });
   }
 }
 
