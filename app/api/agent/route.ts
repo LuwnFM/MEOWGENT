@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
-import { sql as vercelSql } from '@vercel/postgres';
+import { createPool } from '@vercel/postgres';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,8 +29,11 @@ function database() {
 }
 
 type DatabaseRow = Record<string, unknown>;
+type DatabaseValue = string | number | boolean | null | undefined;
 
-async function queryDatabase(query: string, values: unknown[] = []): Promise<DatabaseRow[]> {
+let vercelPool: ReturnType<typeof createPool> | null = null;
+
+async function queryDatabase(query: string, values: DatabaseValue[] = []): Promise<DatabaseRow[]> {
   const neonDatabase = database();
   let neonError: unknown;
 
@@ -43,12 +46,10 @@ async function queryDatabase(query: string, values: unknown[] = []): Promise<Dat
     }
   }
 
-  if (process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING) {
-    const vercelQuery = vercelSql.query as unknown as (
-      text: string,
-      params: unknown[],
-    ) => Promise<{ rows: DatabaseRow[] }>;
-    const result = await vercelQuery(query, values);
+  const vercelUrl = process.env.POSTGRES_URL ?? process.env.POSTGRES_URL_NON_POOLING;
+  if (vercelUrl) {
+    vercelPool ??= createPool({ connectionString: vercelUrl });
+    const result = await vercelPool.query<DatabaseRow>(query, values);
     return result.rows as DatabaseRow[];
   }
 
