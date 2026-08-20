@@ -137,7 +137,8 @@ ${historyLogs.map(log => `* ${log}`).join('\n')}
     a.download = `secops_audit_report_${Date.now()}.md`;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(url);
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
