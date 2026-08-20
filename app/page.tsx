@@ -5,10 +5,7 @@ import AgentPanel from '@/components/AgentPanel';
 
 type Message = { role: 'user' | 'assistant' | 'system'; text: string; time: string };
 
-type OpenRouterResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
-  error?: { message?: string };
-};
+type ChatResponse = { content?: string; error?: string };
 
 export default function MainPage() {
   const [code, setCode] = useState('');
@@ -53,7 +50,6 @@ export default function MainPage() {
 
   const handleSendChatMessage = async () => {
     const text = chatInput.trim();
-    const apiKey = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY;
     if (!text || isChatLoading) return;
 
     setMessages((previous) => [...previous, {
@@ -64,42 +60,26 @@ export default function MainPage() {
     setChatInput('');
     setIsChatLoading(true);
 
-    if (!apiKey) {
-      setMessages((previous) => [...previous, {
-        role: 'system',
-        text: '[ERROR] NEXT_PUBLIC_OPENROUTER_API_KEY is not configured.',
-        time: new Date().toLocaleTimeString()
-      }]);
-      setIsChatLoading(false);
-      return;
-    }
-
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-          'HTTP-Referer': window.location.origin,
-          'X-Title': 'Meowgent Core'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: process.env.NEXT_PUBLIC_OPENROUTER_MODEL || 'qwen/qwen-2.5-72b-instruct',
           messages: [
             { role: 'system', content: 'You are a concise technical assistant.' },
             ...messages
               .filter((message) => message.role !== 'system')
               .map((message) => ({ role: message.role, content: message.text })),
-            { role: 'user', content: text }
-          ]
+            { role: 'user', content: text },
+          ],
         })
       });
-      const data = (await response.json()) as OpenRouterResponse;
-      if (!response.ok) throw new Error(data.error?.message || `OpenRouter request failed (${response.status})`);
+      const data = await response.json() as ChatResponse;
+      if (!response.ok) throw new Error(data.error || `Chat request failed (${response.status})`);
 
       setMessages((previous) => [...previous, {
         role: 'assistant',
-        text: data.choices?.[0]?.message?.content || '[ERROR] OpenRouter returned an empty response.',
+        text: data.content || '[ERROR] Chat provider returned an empty response.',
         time: new Date().toLocaleTimeString()
       }]);
     } catch (error) {
