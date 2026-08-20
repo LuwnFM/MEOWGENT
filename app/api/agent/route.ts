@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { neon } from '@neondatabase/serverless';
+import { sql as vercelSql } from '@vercel/postgres';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,24 +23,58 @@ Mistral handles intermediate scripting, refactoring, extraction, vectorization, 
 Groq handles only raw HTML processing, link harvesting, high-volume log parsing, and simple form filling.
 Fast nodes must not perform logical planning. Return strict JSON with target_node (groq, mistral, or primary), reasoning, and masked_instruction.`;
 
+function database() {
+  const databaseUrl = process.env.DATABASE_URL;
+  return databaseUrl ? neon(databaseUrl) : null;
+}
+
+type DatabaseRow = Record<string, unknown>;
+
+async function queryDatabase(query: string, values: unknown[] = []): Promise<DatabaseRow[]> {
+  const neonDatabase = database();
+  let neonError: unknown;
+
+  if (neonDatabase) {
+    try {
+      return await neonDatabase.query(query, values) as DatabaseRow[];
+    } catch (error) {
+      neonError = error;
+      console.warn('Neon query failed; trying Vercel Postgres fallback.', error);
+    }
+  }
+
+  if (process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING) {
+    const vercelQuery = vercelSql.query as unknown as (
+      text: string,
+      params: unknown[],
+    ) => Promise<{ rows: DatabaseRow[] }>;
+    const result = await vercelQuery(query, values);
+    return result.rows as DatabaseRow[];
+  }
+
+  throw neonError instanceof Error
+    ? neonError
+    : new Error('No database connection configured. Set DATABASE_URL or POSTGRES_URL.');
+}
+
 async function ensureTableExists(): Promise<void> {
-  await sql`
+  await queryDatabase(`
     CREATE TABLE IF NOT EXISTS routing_config (
       id SERIAL PRIMARY KEY,
       prompt_text TEXT NOT NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
-  `;
-  const result = await sql`SELECT id FROM routing_config ORDER BY id LIMIT 1`;
-  if (result.rows.length === 0) {
-    await sql`INSERT INTO routing_config (prompt_text) VALUES (${DEFAULT_PROMPT})`;
+  `);
+  const result = await queryDatabase('SELECT id FROM routing_config ORDER BY id LIMIT 1');
+  if (result.length === 0) {
+    await queryDatabase('INSERT INTO routing_config (prompt_text) VALUES ($1)', [DEFAULT_PROMPT]);
   }
 }
 
 async function getRoutingPrompt(): Promise<string> {
   await ensureTableExists();
-  const result = await sql`SELECT prompt_text FROM routing_config ORDER BY id LIMIT 1`;
-  const prompt = result.rows[0]?.prompt_text;
+  const result = await queryDatabase('SELECT prompt_text FROM routing_config ORDER BY id LIMIT 1');
+  const prompt = result[0]?.prompt_text;
   if (typeof prompt !== 'string' || !prompt.trim()) {
     throw new Error('Routing prompt is missing from routing_config');
   }
@@ -91,11 +126,11 @@ export async function POST(request: Request) {
       if (newPrompt.length > 20_000) {
         return NextResponse.json({ error: 'Prompt is too long' }, { status: 400 });
       }
-      await sql`
+      await queryDatabase(`
         UPDATE routing_config
-        SET prompt_text = ${newPrompt}, updated_at = CURRENT_TIMESTAMP
+        SET prompt_text = $1, updated_at = CURRENT_TIMESTAMP
         WHERE id = (SELECT id FROM routing_config ORDER BY id LIMIT 1)
-      `;
+      `, [newPrompt]);
       return NextResponse.json({ success: true });
     }
 
