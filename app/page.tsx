@@ -8,7 +8,7 @@ export default function MainPage() {
   const [tab, setTab] = useState<'chat' | 'agent'>('chat');
   const [isAuthSaved, setIsAuthSaved] = useState(false);
 
-  // Автоматически подтягиваем сохраненный код доступа при загрузке страницы с телефона
+  // Восстановление токена из локального хранилища устройства при загрузке
   useEffect(() => {
     const savedCode = localStorage.getItem('app_access_token');
     if (savedCode) {
@@ -38,18 +38,19 @@ export default function MainPage() {
       fontFamily: 'Consolas, Monaco, "Courier New", monospace',
       boxSizing: 'border-box'
     }}>
-      {/* HEADER & TOP NAVIGATION */}
+      {/* ПАНЕЛЬ НАВИГАЦИИ */}
       <header style={{
         borderBottom: '2px solid #005500',
         paddingBottom: '15px',
         marginBottom: '20px'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <h2 style={{ margin: 0, fontSize: '18px', color: '#00ffff', textShadow: '0 0 8px rgba(0,255,255,0.4)' }}>
             M E O W G E N T // CORE
           </h2>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button 
+              type="button"
               onClick={() => setTab('chat')} 
               style={{
                 padding: '8px 16px',
@@ -65,6 +66,7 @@ export default function MainPage() {
               [ CONVENTIONAL CHAT ]
             </button>
             <button 
+              type="button"
               onClick={() => setTab('agent')} 
               style={{
                 padding: '8px 16px',
@@ -83,7 +85,7 @@ export default function MainPage() {
         </div>
       </header>
 
-      {/* AUTH CONFIGURATION BLOCK */}
+      {/* БЛОК СЕКРЕТНОГО КОДА ДОСТУПА */}
       <section style={{
         background: '#111115',
         border: '1px solid #224422',
@@ -94,7 +96,7 @@ export default function MainPage() {
         flexDirection: 'column',
         gap: '8px'
       }}>
-        <span style={{ fontSize: '11px', color: '#888', uppercase: true }}>🔐 КЛЮЧ ДОСТУПА К СИСТЕМЕ:</span>
+        <span style={{ fontSize: '11px', color: '#888', textTransform: 'uppercase' }}>🔐 КЛЮЧ ДОСТУПА К СИСТЕМЕ:</span>
         <div style={{ display: 'flex', gap: '10px' }}>
           <input
             type="password"
@@ -114,6 +116,7 @@ export default function MainPage() {
           />
           {isAuthSaved && (
             <button 
+              type="button"
               onClick={handleClearCode}
               style={{
                 background: '#330000',
@@ -131,7 +134,7 @@ export default function MainPage() {
         </div>
       </section>
 
-      {/* MAIN CONTENT DISPLAY */}
+      {/* КОНТЕНТ ВКЛАДОК */}
       <main style={{ minHeight: '60vh' }}>
         {tab === 'chat' ? (
           <div style={{
@@ -139,7 +142,7 @@ export default function MainPage() {
             border: '1px solid #222',
             borderRadius: '6px',
             padding: '20px',
-            color: '#555',
+            color: '#666',
             textAlign: 'center',
             fontSize: '14px',
             marginTop: '40px'
@@ -155,3 +158,4 @@ export default function MainPage() {
     </div>
   );
 }
+, 
