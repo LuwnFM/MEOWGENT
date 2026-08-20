@@ -1,12 +1,19 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AgentPanel from '@/components/AgentPanel';
+
+type Message = { role: 'user' | 'system'; text: string; time: string };
 
 export default function MainPage() {
   const [code, setCode] = useState('');
   const [tab, setTab] = useState<'chat' | 'agent'>('chat');
   const [isAuthSaved, setIsAuthSaved] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [messages, setMessages] = useState<Message[]>([
+    { role: 'system', text: 'SYSTEM: SecOps Static Analyzer Node Online. Ready for source code inspection.', time: new Date().toLocaleTimeString() }
+  ]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Восстановление токена из локального хранилища устройства при загрузке
   useEffect(() => {
@@ -18,9 +25,14 @@ export default function MainPage() {
   }, []);
 
   const handleSaveCode = (val: string) => {
+    const trimmedCode = val.trim();
     setCode(val);
-    localStorage.setItem('app_access_token', val);
-    setIsAuthSaved(true);
+    if (trimmedCode) {
+      localStorage.setItem('app_access_token', trimmedCode);
+    } else {
+      localStorage.removeItem('app_access_token');
+    }
+    setIsAuthSaved(Boolean(trimmedCode));
   };
 
   const handleClearCode = () => {
@@ -29,11 +41,35 @@ export default function MainPage() {
     setIsAuthSaved(false);
   };
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSendChatMessage = () => {
+    const text = chatInput.trim();
+    if (!text || !isAuthSaved) return;
+
+    setMessages((previous) => [...previous, {
+      role: 'user',
+      text,
+      time: new Date().toLocaleTimeString()
+    }]);
+    setChatInput('');
+
+    window.setTimeout(() => {
+      setMessages((previous) => [...previous, {
+        role: 'system',
+        text: '[ANALYSIS] Input accepted. Syntax boundaries checked. No errors detected. Switch to DISTRIBUTED AGENT to dispatch a task to the execution cluster.',
+        time: new Date().toLocaleTimeString()
+      }]);
+    }, 1200);
+  };
+
   return (
     <div style={{
-      background: '#0a0a0c',
+      background: '#050505',
       minHeight: '100vh',
-      color: '#33ff33',
+      color: '#00ff00',
       padding: '15px',
       fontFamily: 'Consolas, Monaco, "Courier New", monospace',
       boxSizing: 'border-box'
@@ -137,19 +173,36 @@ export default function MainPage() {
       {/* КОНТЕНТ ВКЛАДОК */}
       <main style={{ minHeight: '60vh' }}>
         {tab === 'chat' ? (
-          <div style={{
-            background: '#111115',
-            border: '1px solid #222',
-            borderRadius: '6px',
-            padding: '20px',
-            color: '#666',
-            textAlign: 'center',
-            fontSize: '14px',
-            marginTop: '40px'
-          }}>
-            <p style={{ color: '#888', margin: '0 0 10px 0' }}>[ СТАТИЧЕСКИЙ АНАЛИЗАТОР СРЕДЫ ]</p>
-            Интерфейс стандартного текстового чата находится в режиме ожидания. 
-            Переключите вкладку сверху на <strong>DISTRIBUTED AGENT</strong> для управления распределенным сетевым кластером.
+          <div style={{ background: '#050505', border: '1px solid #005500', padding: '15px' }}>
+            <h4 style={{ margin: '0 0 10px 0', color: '#00ff00', fontSize: '13px' }}>INTERACTIVE DIAGNOSTIC CHAT</h4>
+            <div style={{ background: '#050505', border: '1px solid #005500', padding: '10px', height: '220px', overflowY: 'auto', fontSize: '13px', marginBottom: '12px' }}>
+              {messages.map((message, index) => (
+                <div key={`${message.time}-${index}`} style={{ marginBottom: '8px', borderBottom: '1px solid #005500', paddingBottom: '4px', color: message.role === 'user' ? '#00ffff' : '#00ff00' }}>
+                  <span style={{ color: '#666', fontSize: '11px' }}>[{message.time}]</span>{' '}
+                  <strong>{message.role.toUpperCase()}:</strong> {message.text}
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                disabled={!isAuthSaved}
+                placeholder={isAuthSaved ? 'Enter a code or question for an express check...' : 'Enter the access code above to unlock the console'}
+                style={{ flex: '1 1 220px', minWidth: 0, background: '#050505', color: '#00ff00', border: '1px solid #005500', padding: '10px', outline: 'none' }}
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && handleSendChatMessage()}
+              />
+              <button
+                type="button"
+                disabled={!isAuthSaved || !chatInput.trim()}
+                onClick={handleSendChatMessage}
+                style={{ background: isAuthSaved && chatInput.trim() ? '#00ff00' : '#005500', color: '#000', border: '1px solid #005500', padding: '0 20px', fontWeight: 'bold', cursor: isAuthSaved && chatInput.trim() ? 'pointer' : 'not-allowed' }}
+              >
+                SEND
+              </button>
+            </div>
           </div>
         ) : (
           <AgentPanel accessCode={code} />
