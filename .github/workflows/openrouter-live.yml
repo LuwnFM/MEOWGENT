@@ -1,0 +1,33 @@
+name: OpenRouter live smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Optional exact free OpenRouter model ID; empty = auto-discover"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      TEST_MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify key exists
+        run: |
+          if [[ -z "$OPENROUTER_API_KEY" ]]; then
+            echo "::error::Add OPENROUTER_API_KEY in repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+      - name: Test actual OpenRouter completion (free model only)
+        run: python scripts/test_openrouter_live.py
