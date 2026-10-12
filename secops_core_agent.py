@@ -203,9 +203,12 @@ def select_available_model(base_url: str, api_key: SecretStr, candidates: tuple[
     return requested or candidates[-1]
 
 
+CURRENT_TASK_ID: int | None = None
+
+
 def log_to_server(text: str, status: str = "running") -> None:
     try:
-        requests.post(f"{BASE_URL}/api/agent", json={"accessCode": ACCESS_CODE, "action": "UPDATE_FROM_AGENT", "agentStatus": {"status": status, "text": text}}, timeout=30).raise_for_status()
+        requests.post(f"{BASE_URL}/api/agent", json={"accessCode": ACCESS_CODE, "action": "UPDATE_FROM_AGENT", "taskId": CURRENT_TASK_ID, "agentStatus": {"status": status, "text": text}}, timeout=30).raise_for_status()
     except requests.RequestException as error:
         print(f"[!] Status update failed: {error}")
 
@@ -306,6 +309,7 @@ def parse_verdict(content: Any, fallback_instruction: str) -> tuple[str, str, st
 
 
 def main() -> None:
+    global CURRENT_TASK_ID
     openrouter_key = required_secret("OPENROUTER_API_KEY")
     requested_primary = os.environ.get("AGENT_MODEL", OPENROUTER_MODEL_CANDIDATES[0])
     primary_model = select_available_model("https://openrouter.ai/api/v1", openrouter_key, OPENROUTER_MODEL_CANDIDATES, requested_primary)
@@ -327,6 +331,10 @@ def main() -> None:
         try:
             task = poll_task()
             if task and task.get("status") == "pending":
+                CURRENT_TASK_ID = int(task["taskId"] if "taskId" in task else task["id"])
+                if CURRENT_TASK_ID <= 0:
+                    raise ValueError("Invalid task ID")
+                log_to_server("Worker accepted task.", "running")
                 instruction = str(task.get("instruction") or "").strip()
                 if not instruction:
                     raise ValueError("Received an empty task instruction")
@@ -383,6 +391,7 @@ def main() -> None:
         except Exception as error:
             log_to_server(f"Worker error: {error}", "failed")
             print(f"[-] Evaluation checkpoint failed: {error}")
+        CURRENT_TASK_ID = None
         time.sleep(random.uniform(18, 24))
 
 
