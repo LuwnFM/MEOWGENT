@@ -18,12 +18,12 @@ npm ci
 
 ```dotenv
 APP_ACCESS_CODE=replace-with-a-strong-private-code
-DATABASE_URL=postgresql://meowgent:local-test-password@localhost:5432/meowgent
+POSTGRES_URL=postgresql://meowgent:local-test-password@localhost:5432/meowgent
 REDIS_URL=redis://localhost:6379/0
 OPENROUTER_API_KEY=your-openrouter-key
 ```
 
-Удалите `POSTGRES_URL`, если он указан. Не публикуйте `.env.local`.
+Удалите или закомментируйте `DATABASE_URL`, чтобы локальный PostgreSQL использовался через существующий адаптер `@vercel/postgres`. Не публикуйте `.env.local`.
 
 Запустите `npm run dev` и откройте http://localhost:3000. Для чата нужен действующий ключ OpenRouter. Для исполнения заданий требуется отдельно настроенный Python worker; этот тестовый Compose запускает только PostgreSQL и Redis.
 
