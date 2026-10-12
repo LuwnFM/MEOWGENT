@@ -28,15 +28,19 @@ export async function getCatalog(): Promise<ModelInfo[]> {
   catalogCache = {until:Date.now()+300000, models};
   return models;
 }
+function poolEligible(m:ModelInfo|undefined,input:number,output:number,budget:number):boolean {
+  return !!m && (!m.context_length || m.context_length >= input+output) && estimateCost(m,input,output)<=budget;
+}
 export function selectModels(models: ModelInfo[], tier: RoutingTier): string[] {
-  const budget = Math.max(0,Number(process.env.OPENROUTER_MAX_ESTIMATED_USD_PER_REQUEST || '0.01'));
+  const configuredBudget = Number(process.env.OPENROUTER_MAX_ESTIMATED_USD_PER_REQUEST || '0.01');
+  const budget = Number.isFinite(configuredBudget) ? Math.max(0,configuredBudget) : 0.01;
   const output = tier === 'complex' ? 1800 : tier === 'balanced' ? 900 : 400;
   const input = tier === 'complex' ? 6000 : tier === 'balanced' ? 2500 : 1000;
   const priority = (process.env.OPENROUTER_PREFERRED_MODELS || 'z-ai/glm-5.2:free,deepseek/deepseek-v3.2,openai/gpt-oss-20b:free')
     .split(',').map(s=>s.trim()).filter(Boolean);
   const lookup = new Map(models.map(m=>[m.id,m]));
   const preferred = priority.filter(id=>lookup.has(id));
-  const preferredFree = preferred.filter(id=> estimateCost(lookup.get(id)!,input,output)===0);
+  const preferredFree = preferred.filter(id=> poolEligible(lookup.get(id), input, output, budget) && estimateCost(lookup.get(id)!,input,output)===0);
   const pool = models.filter(m=>{
     if (m.context_length && m.context_length < input+output) return false;
     const price=estimateCost(m,input,output);
