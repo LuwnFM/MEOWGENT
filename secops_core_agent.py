@@ -185,8 +185,10 @@ def make_llm(base_url: str, api_key: SecretStr, model: str) -> ChatOpenAI:
 
 
 def select_available_model(base_url: str, api_key: SecretStr, candidates: tuple[str, ...], requested: str) -> str:
-    """Prefer the requested model, then choose the first model advertised by the provider."""
-    ordered = (requested, *candidates)
+    """Choose a configured available free or budget model; never silently upgrade to an expensive one."""
+    preference = tuple(x.strip() for x in os.environ.get("OPENROUTER_PREFERRED_MODELS", "").split(",") if x.strip())
+    ordered = tuple(dict.fromkeys(x for x in (requested, *preference, *candidates) if x))
+    is_openrouter = "openrouter.ai" in base_url
     try:
         response = requests.get(
             f"{base_url.rstrip('/')}/models",
@@ -194,13 +196,43 @@ def select_available_model(base_url: str, api_key: SecretStr, candidates: tuple[
             timeout=20,
         )
         response.raise_for_status()
-        available = {str(item.get("id")) for item in response.json().get("data", []) if isinstance(item, dict)}
-        for model in ordered:
-            if model in available:
-                return model
+        available = {
+            str(item["id"]): item for item in response.json().get("data", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if not is_openrouter:
+            return next((name for name in ordered if name in available), next(iter(available)))
+        limit = max(0.0, float(os.environ.get("OPENROUTER_MAX_ESTIMATED_USD_PER_REQUEST", "0.01")))
+
+        def cost(item: dict[str, Any]) -> float:
+            pricing = item.get("pricing") or {}
+            try:
+                # Estimate on an intentionally conservative representative agent turn.
+                prompt = float(pricing["prompt"])
+                completion = float(pricing["completion"])
+                price = prompt * 6000 + completion * 1800
+                return price if price >= 0 else float("inf")
+            except (KeyError, ValueError, TypeError, OverflowError):
+                return float("inf")
+
+        eligible = {name: item for name, item in available.items() if cost(item) <= limit}
+        if not eligible:
+            raise RuntimeError("No OpenRouter model satisfies the configured budget ceiling")
+        free = [name for name in ordered if name in eligible and cost(eligible[name]) == 0]
+        if free:
+            return free[0]
+        catalog_free = sorted(name for name, item in eligible.items() if cost(item) == 0)
+        if catalog_free:
+            return catalog_free[0]
+        for name in ordered:
+            if name in eligible:
+                return name
+        return min(eligible, key=lambda name: (cost(eligible[name]), name))
     except (requests.RequestException, ValueError, TypeError, KeyError) as error:
+        if is_openrouter:
+            raise RuntimeError("OpenRouter catalog cannot be verified; refusing unpriced model") from error
         print(f"[!] Model discovery failed for {base_url}: {error}")
-    return requested or candidates[-1]
+        return requested or candidates[-1]
 
 
 def log_to_server(text: str, status: str = "running") -> None:
@@ -307,7 +339,7 @@ def parse_verdict(content: Any, fallback_instruction: str) -> tuple[str, str, st
 
 def main() -> None:
     openrouter_key = required_secret("OPENROUTER_API_KEY")
-    requested_primary = os.environ.get("AGENT_MODEL", OPENROUTER_MODEL_CANDIDATES[0])
+    requested_primary = os.environ.get("AGENT_MODEL") or OPENROUTER_MODEL_CANDIDATES[0]
     primary_model = select_available_model("https://openrouter.ai/api/v1", openrouter_key, OPENROUTER_MODEL_CANDIDATES, requested_primary)
     print(f"[*] OpenRouter coordinator model: {primary_model}")
     dispatcher = make_llm("https://openrouter.ai/api/v1", openrouter_key, primary_model)
