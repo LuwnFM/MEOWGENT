@@ -1,0 +1,22 @@
+# Local database for development and single-server deployments.
+# Start with: docker compose -f docker-compose.postgres.yml up -d
+# Never expose port 5432 to the public Internet.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-meowgent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-meowgent}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - meowgent-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-meowgent} -d ${POSTGRES_DB:-meowgent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  meowgent-postgres:
