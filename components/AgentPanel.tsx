@@ -6,6 +6,7 @@ type TaskStatus = 'offline' | 'pending' | 'running' | 'completed' | 'failed';
 type StealthLevel = 'low' | 'standard' | 'maximum';
 
 type Task = { 
+  id?: number;
   instruction: string; 
   status: TaskStatus; 
   statusText: string;
@@ -19,6 +20,7 @@ type AgentResponse = {
 
 export default function AgentPanel({ accessCode }: { accessCode: string }) {
   const [instruction, setInstruction] = useState('');
+  const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [status, setStatus] = useState<TaskStatus>('offline');
   const [text, setText] = useState('System ready. Distributed multi-provider cascade listening.');
   const [stealth, setStealth] = useState<StealthLevel>('standard');
@@ -42,7 +44,7 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
       const response = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessCode, action: 'GET_STATUS' }),
+        body: JSON.stringify({ accessCode, action: 'GET_STATUS', ...(activeTaskId ? { taskId: activeTaskId } : {}) }),
       });
       const data = (await response.json()) as AgentResponse;
       if (response.ok && data.task) {
@@ -68,7 +70,7 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
     void sync();
     const interval = window.setInterval(() => void sync(), 4000);
     return () => window.clearInterval(interval);
-  }, [accessCode]);
+  }, [accessCode, activeTaskId]);
 
   // Автопрокрутка логов на экране смартфона
   useEffect(() => {
@@ -115,6 +117,8 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
         }),
       });
       if (!response.ok) throw new Error('Task submission aborted');
+      const submitted = await response.json() as { taskId?: number };
+      if (submitted.taskId) setActiveTaskId(submitted.taskId);
       setStatus('pending');
       setText('Спецификация отправлена. Распределенная сеть вычисляет маршруты провайдеров...');
       setInstruction('');
@@ -134,7 +138,7 @@ export default function AgentPanel({ accessCode }: { accessCode: string }) {
 Generated: ${new Date().toLocaleString()}
 Status: ${status.toUpperCase()}
 Stealth Execution Profile: ${stealth.toUpperCase()}
-Database Cache Status: ${cacheDetected ? 'NEON DB CACHE HIT' : 'NEW PROTOCOL GENERATED'}
+Database Cache Status: ${cacheDetected ? 'CACHE HIT' : 'NEW PROTOCOL GENERATED'}
 
 ## EXECUTION DIRECTIVE
 \`\`\`text
@@ -166,7 +170,7 @@ ${historyLogs.map(log => `* ${log}`).join('\n')}
         </h2>
         {cacheDetected && (
           <span style={{ fontSize: '10px', background: '#003333', color: '#00ffff', border: '1px solid #00ffff', padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold' }}>
-            💾 NEON DB CACHE
+            💾 TASK CACHE
           </span>
         )}
       </div>

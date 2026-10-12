@@ -15,10 +15,10 @@ type AgentRequest = {
   instruction?: unknown;
   agentStatus?: { status?: unknown; text?: unknown };
   newPrompt?: unknown;
+  taskId?: unknown;
   fileKeys?: unknown;
 };
 
-let currentTask: Task | null = null;
 const DEFAULT_PROMPT = `You are the Lead Infrastructure Dispatcher and LLM Router of a distributed compute network.
 Classify each incoming directive by technical complexity and assign the optimal worker node.
 Primary handles architecture, complex logic, structural analysis, and final PoC assembly.
@@ -37,28 +37,17 @@ type DatabaseValue = string | number | boolean | null | undefined;
 let vercelPool: ReturnType<typeof createPool> | null = null;
 
 async function queryDatabase(query: string, values: DatabaseValue[] = []): Promise<DatabaseRow[]> {
+  // A configured database is authoritative. Never silently switch to a second
+  // database after a query failure: that can split tasks and routing settings.
   const neonDatabase = database();
-  let neonError: unknown;
-
-  if (neonDatabase) {
-    try {
-      return await neonDatabase.query(query, values) as DatabaseRow[];
-    } catch (error) {
-      neonError = error;
-      console.warn('Neon query failed; trying Vercel Postgres fallback.', error);
-    }
-  }
-
+  if (neonDatabase) return await neonDatabase.query(query, values) as DatabaseRow[];
   const vercelUrl = process.env.POSTGRES_URL ?? process.env.POSTGRES_URL_NON_POOLING;
   if (vercelUrl) {
     vercelPool ??= createPool({ connectionString: vercelUrl });
     const result = await vercelPool.query<DatabaseRow>(query, values);
     return result.rows as DatabaseRow[];
   }
-
-  throw neonError instanceof Error
-    ? neonError
-    : new Error('No database connection configured. Set DATABASE_URL or POSTGRES_URL.');
+  throw new Error('No database configured. Set DATABASE_URL or POSTGRES_URL.');
 }
 
 async function ensureTableExists(): Promise<void> {
@@ -96,7 +85,7 @@ async function getRoutingPrompt(): Promise<string> {
 }
 
 function authorized(accessCode: unknown): boolean {
-  const configuredCode = process.env.APP_ACCESS_CODE ?? process.env.NEXT_PUBLIC_APP_ACCESS_CODE;
+  const configuredCode = process.env.APP_ACCESS_CODE;
   return Boolean(configuredCode) && accessCode === configuredCode;
 }
 
@@ -114,38 +103,39 @@ export async function POST(request: Request) {
         'INSERT INTO agent_tasks (instruction, status, status_text) VALUES ($1, $2, $3) RETURNING id',
         [instruction, 'pending', 'Supervisor node dispatching work...'],
       );
-      currentTask = { id: Number(rows[0]?.id), instruction, status: 'pending', statusText: 'Supervisor node dispatching work...' };
+      const taskId = Number(rows[0]?.id);
+      if (!Number.isSafeInteger(taskId) || taskId <= 0) throw new Error('Task ID was not returned');
       const fileKeys = Array.isArray(body.fileKeys) ? body.fileKeys.filter((key): key is string => typeof key === 'string').slice(0, 20) : [];
-      if (process.env.REDIS_URL) {
-        await enqueueAgentJob({ taskId: currentTask.id ?? 0, instruction, fileKeys });
-      }
-      if (process.env.INNGEST_EVENT_KEY) {
-        await inngest.send({ name: 'agent/job.created', data: { taskId: currentTask.id ?? 0, instruction, fileKeys } });
-      }
-      return NextResponse.json({ success: true });
+      if (process.env.REDIS_URL) await enqueueAgentJob({ taskId, instruction, fileKeys });
+      if (process.env.INNGEST_EVENT_KEY) await inngest.send({ name: 'agent/job.created', data: { taskId, instruction, fileKeys } });
+      return NextResponse.json({ success: true, taskId });
     }
 
     if (body.action === 'GET_STATUS') {
-      if (!currentTask) {
-        const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
-        const row = rows[0];
-        if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
-      }
-      return NextResponse.json({ task: currentTask });
+      const requestedId = Number(body.taskId);
+      const hasId = body.taskId !== undefined && body.taskId !== null;
+      if (hasId && (!Number.isSafeInteger(requestedId) || requestedId <= 0)) return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
+      const rows = hasId
+        ? await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks WHERE id = $1', [requestedId])
+        : await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
+      const row = rows[0];
+      return NextResponse.json({ task: row ? { id: Number(row.id), instruction: String(row.instruction), status: row.status, statusText: String(row.status_text) } : null });
     }
 
-    if (body.action === 'UPDATE_FROM_AGENT' && currentTask && body.agentStatus) {
+    if (body.action === 'UPDATE_FROM_AGENT' && body.agentStatus) {
       const { status, text } = body.agentStatus;
       const validStatuses: TaskStatus[] = ['pending', 'running', 'completed', 'failed'];
-      if (typeof status === 'string' && validStatuses.includes(status as TaskStatus) && typeof text === 'string') {
-        currentTask.status = status as TaskStatus;
-        currentTask.statusText = text;
-        await queryDatabase(
-          'UPDATE agent_tasks SET status = $1, status_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-          [status, text, currentTask.id ?? null],
-        );
+      const taskId = Number(body.taskId);
+      if (!Number.isSafeInteger(taskId) || taskId <= 0) return NextResponse.json({ error: 'taskId is required for updates' }, { status: 400 });
+      if (typeof status !== 'string' || !validStatuses.includes(status as TaskStatus) || typeof text !== 'string' || text.length > 20000) {
+        return NextResponse.json({ error: 'Invalid agent status' }, { status: 400 });
       }
-      return NextResponse.json({ success: true });
+      const updated = await queryDatabase(
+        'UPDATE agent_tasks SET status = $1, status_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING id',
+        [status, text, taskId],
+      );
+      if (!updated.length) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+      return NextResponse.json({ success: true, taskId });
     }
 
     if (body.action === 'GET_PROMPT') {
@@ -179,12 +169,14 @@ export async function GET(request: Request) {
   }
   try {
     await ensureTableExists();
-    if (!currentTask) {
-      const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
-      const row = rows[0];
-      if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
-    }
-    return NextResponse.json({ task: currentTask });
+    const requestedId = new URL(request.url).searchParams.get('taskId');
+    const id = requestedId === null ? null : Number(requestedId);
+    if (id !== null && (!Number.isSafeInteger(id) || id <= 0)) return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
+    const rows = id === null
+      ? await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1')
+      : await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks WHERE id = $1', [id]);
+    const row = rows[0];
+    return NextResponse.json({ task: row ? { id: Number(row.id), instruction: String(row.instruction), status: row.status, statusText: String(row.status_text) } : null });
   } catch (error) {
     console.error('Agent database error:', error);
     return NextResponse.json({ error: 'Server Error' }, { status: 500 });
