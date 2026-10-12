@@ -3,6 +3,7 @@ import { neon } from '@neondatabase/serverless';
 import { createPool } from '@vercel/postgres';
 import { enqueueAgentJob } from '@/lib/queue';
 import { inngest } from '@/lib/inngest';
+import { verifyAccessCode, accessCodeFromRequest } from '@/lib/security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,7 @@ type AgentRequest = {
   fileKeys?: unknown;
 };
 
-let currentTask: Task | null = null;
+
 const DEFAULT_PROMPT = `You are the Lead Infrastructure Dispatcher and LLM Router of a distributed compute network.
 Classify each incoming directive by technical complexity and assign the optimal worker node.
 Primary handles architecture, complex logic, structural analysis, and final PoC assembly.
@@ -96,14 +97,19 @@ async function getRoutingPrompt(): Promise<string> {
 }
 
 function authorized(accessCode: unknown): boolean {
-  const configuredCode = process.env.APP_ACCESS_CODE ?? process.env.NEXT_PUBLIC_APP_ACCESS_CODE;
-  return Boolean(configuredCode) && accessCode === configuredCode;
+  return verifyAccessCode(accessCode);
+}
+
+async function latestTask(): Promise<Task | null> {
+  const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
+  const row = rows[0];
+  return row ? { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) } : null;
 }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as AgentRequest;
-    if (!authorized(body.accessCode)) {
+    if (!authorized(accessCodeFromRequest(request) ?? body.accessCode)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     await ensureTableExists();
@@ -114,37 +120,30 @@ export async function POST(request: Request) {
         'INSERT INTO agent_tasks (instruction, status, status_text) VALUES ($1, $2, $3) RETURNING id',
         [instruction, 'pending', 'Supervisor node dispatching work...'],
       );
-      currentTask = { id: Number(rows[0]?.id), instruction, status: 'pending', statusText: 'Supervisor node dispatching work...' };
+      const taskId = Number(rows[0]?.id);
       const fileKeys = Array.isArray(body.fileKeys) ? body.fileKeys.filter((key): key is string => typeof key === 'string').slice(0, 20) : [];
       if (process.env.REDIS_URL) {
-        await enqueueAgentJob({ taskId: currentTask.id ?? 0, instruction, fileKeys });
+        await enqueueAgentJob({ taskId: taskId, instruction, fileKeys });
       }
       if (process.env.INNGEST_EVENT_KEY) {
-        await inngest.send({ name: 'agent/job.created', data: { taskId: currentTask.id ?? 0, instruction, fileKeys } });
+        await inngest.send({ name: 'agent/job.created', data: { taskId: taskId, instruction, fileKeys } });
       }
       return NextResponse.json({ success: true });
     }
 
     if (body.action === 'GET_STATUS') {
-      if (!currentTask) {
-        const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
-        const row = rows[0];
-        if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
-      }
-      return NextResponse.json({ task: currentTask });
+      return NextResponse.json({ task: await latestTask() });
     }
 
-    if (body.action === 'UPDATE_FROM_AGENT' && currentTask && body.agentStatus) {
+    if (body.action === 'UPDATE_FROM_AGENT' && body.agentStatus) {
       const { status, text } = body.agentStatus;
       const validStatuses: TaskStatus[] = ['pending', 'running', 'completed', 'failed'];
-      if (typeof status === 'string' && validStatuses.includes(status as TaskStatus) && typeof text === 'string') {
-        currentTask.status = status as TaskStatus;
-        currentTask.statusText = text;
-        await queryDatabase(
-          'UPDATE agent_tasks SET status = $1, status_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-          [status, text, currentTask.id ?? null],
-        );
+      if (typeof status !== 'string' || !validStatuses.includes(status as TaskStatus) || typeof text !== 'string' || text.length > 20000) {
+        return NextResponse.json({ error: 'Invalid agent status' }, { status: 400 });
       }
+      const task = await latestTask();
+      if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+      await queryDatabase('UPDATE agent_tasks SET status = $1, status_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3', [status, text, task.id]);
       return NextResponse.json({ success: true });
     }
 
@@ -174,17 +173,12 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const secret = new URL(request.url).searchParams.get('secret');
-  if (!authorized(secret)) {
+  if (!authorized(accessCodeFromRequest(request) ?? secret)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   try {
     await ensureTableExists();
-    if (!currentTask) {
-      const rows = await queryDatabase('SELECT id, instruction, status, status_text FROM agent_tasks ORDER BY id DESC LIMIT 1');
-      const row = rows[0];
-      if (row) currentTask = { id: Number(row.id), instruction: String(row.instruction), status: row.status as TaskStatus, statusText: String(row.status_text) };
-    }
-    return NextResponse.json({ task: currentTask });
+    return NextResponse.json({ task: await latestTask() });
   } catch (error) {
     console.error('Agent database error:', error);
     return NextResponse.json({ error: 'Server Error' }, { status: 500 });
