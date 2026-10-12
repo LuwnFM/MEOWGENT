@@ -21,6 +21,10 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
+      - name: OpenRouter routing unit tests
+        run: node --test tests/openrouter-routing.test.cjs
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
       - run: npm run build
 
   deploy:
