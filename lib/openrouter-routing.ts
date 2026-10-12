@@ -52,5 +52,5 @@ export function selectModels(models: ModelInfo[], tier: RoutingTier): string[] {
   const preferredPaid = preferred.filter(id=> !preferredFree.includes(id) && pool.some(m=>m.id===id));
   // Free models first; prioritize the configured list, then eligible priced models.
   const free = pool.filter(m=>estimateCost(m,input,output)===0).map(m=>m.id);
-  return [...new Set([...preferredFree,...free,...preferredPaid,...pool.map(m=>m.id)])].slice(0,12);
+  return Array.from(new Set([...preferredFree,...free,...preferredPaid,...pool.map(m=>m.id)])).slice(0,12);
 }
