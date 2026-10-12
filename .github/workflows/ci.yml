@@ -1,8 +1,12 @@
 name: CI
 
 on:
-  push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -26,34 +30,3 @@ jobs:
       - name: TypeScript typecheck
         run: npx tsc --noEmit
       - run: npm run build
-
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: validate
-    runs-on: ubuntu-latest
-    env:
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-      - run: npm ci
-      - name: Verify Vercel credentials
-        run: |
-          missing=()
-          [[ -n "$VERCEL_TOKEN" ]] || missing+=(VERCEL_TOKEN)
-          [[ -n "$VERCEL_ORG_ID" ]] || missing+=(VERCEL_ORG_ID)
-          [[ -n "$VERCEL_PROJECT_ID" ]] || missing+=(VERCEL_PROJECT_ID)
-          if (( ${#missing[@]} > 0 )); then
-            echo "::error title=Missing Vercel secrets::${missing[*]} must be configured in GitHub Actions secrets"
-            exit 1
-          fi
-      - name: Deploy to Vercel
-        run: |
-          npx vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
-          npx vercel@latest build --prod --token="$VERCEL_TOKEN"
-          npx vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN"
