@@ -1,17 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createUploadUrl } from '@/lib/storage';
+import { verifyAccessCode } from '@/lib/security';
 
 export const runtime = 'nodejs';
-
-function authorized(value: unknown) {
-  const configured = process.env.APP_ACCESS_CODE;
-  return Boolean(configured) && value === configured;
-}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { accessCode?: unknown; filename?: unknown; contentType?: unknown };
-    if (!authorized(body.accessCode)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!verifyAccessCode(body.accessCode)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (typeof body.filename !== 'string' || body.filename.length < 1 || body.filename.length > 255) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     }

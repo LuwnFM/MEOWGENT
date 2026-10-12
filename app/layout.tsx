@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'SecOps Penetration Intelligence Terminal',
-  description: 'Uncensored Audit Node',
+  title: 'SecOps MEOWGENT',
+  description: 'AI-powered cybersecurity operations platform',
 };
 
 export default function RootLayout({

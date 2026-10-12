@@ -65,6 +65,7 @@ export default function MainPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          accessCode: code,
           messages: [
             { role: 'system', content: 'You are a concise technical assistant.' },
             ...messages
@@ -110,7 +111,7 @@ export default function MainPage() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <h2 style={{ margin: 0, fontSize: '18px', color: '#00ffff', textShadow: '0 0 8px rgba(0,255,255,0.4)' }}>
-            M E O W G E N T // CORE
+            SecOps MEOWGENT // CORE
           </h2>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button 
